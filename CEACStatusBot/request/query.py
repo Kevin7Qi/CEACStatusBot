@@ -1,6 +1,8 @@
+import time
+from urllib.parse import urlparse
+
 import requests
 from bs4 import BeautifulSoup
-import time
 
 from CEACStatusBot.captcha import CaptchaHandle, OnnxCaptchaHandle
 
@@ -37,8 +39,28 @@ def query_status(location, application_num, passport_number, surname, captchaHan
 
         soup = BeautifulSoup(r.text, features="lxml")
 
-        # Find captcha image
+        # Diagnose the initial public page without logging request data, response
+        # bodies, or any case/passport identifiers.
         captcha = soup.find(name="img", id="c_status_ctl00_contentplaceholder1_defaultcaptcha_CaptchaImage")
+        location_dropdown = soup.find("select", id="Location_Dropdown")
+        page_title = soup.title.get_text(" ", strip=True) if soup.title else "<missing>"
+        cloudflare_detected = "cloudflare" in page_title.casefold() or "cf-ray" in r.headers
+        print("CEAC initial response diagnostics:")
+        print(f"  HTTP status: {r.status_code}")
+        print(f"  Final host: {urlparse(r.url).hostname or '<missing>'}")
+        print(f"  Content-Type: {r.headers.get('content-type', '<missing>')}")
+        print(f"  Response bytes: {len(r.content)}")
+        print(f"  Page title: {page_title}")
+        print(f"  Cloudflare detected: {cloudflare_detected}")
+        print(f"  Captcha image present: {captcha is not None}")
+        print(f"  Location dropdown present: {location_dropdown is not None}")
+
+        if captcha is None or location_dropdown is None:
+            raise RuntimeError(
+                "CEAC initial page is missing expected form elements; "
+                "the request may have been blocked or the page structure may have changed."
+            )
+
         image_url = ROOT + captcha["src"]
         img_resp = session.get(image_url)
 
@@ -47,7 +69,6 @@ def query_status(location, application_num, passport_number, surname, captchaHan
         print(f"Captcha solved: {captcha_num}")
 
         # Find the correct value for the location dropdown
-        location_dropdown = soup.find("select", id="Location_Dropdown")
         location_value = None
         for option in location_dropdown.find_all("option"):
             if location in option.text:
